@@ -10,57 +10,17 @@
 #include "StringSplitter.hpp"
 #include <map>
 #include <algorithm>
-#include <memory>
 #include <stack>
 
 using namespace std;
 
-class BaseNode;
-class BaseNode 
-{
-protected:
-    BaseNode* parent = nullptr;
-    std::vector<std::unique_ptr<BaseNode>> children;
-
-public:
-    virtual ~BaseNode() = default;
-    
-    // Common methods for all nodes
-    virtual std::string get_type() const = 0;
-    
-    // Parent-child relationship management
-    BaseNode* get_parent() const { return parent; }
-    const std::vector<std::unique_ptr<BaseNode>>& get_children() const { return children; }
-    
-    void add_child(std::unique_ptr<BaseNode> child) {
-        if (child) {
-            child->parent = this;
-            children.push_back(std::move(child));
-        }
-    }
-    
-    void remove_child(BaseNode* child) {
-        children.erase(
-            std::remove_if(children.begin(), children.end(),
-                [child](const std::unique_ptr<BaseNode>& ptr) {
-                    return ptr.get() == child;
-                }),
-            children.end()
-        );
-    }
-
-};
-
-class Text : public BaseNode
+class Text
 {
 	private:
 		string text;
 
 	public:
-		Text(const string& text, BaseNode* parent) : text(text) : text(text) 
-		{
-			this->parent = parent;
-		}
+		Text(const string& text) : text(text) {}
 
 		string get_text() const
 		{
@@ -71,22 +31,15 @@ class Text : public BaseNode
 		{
 			text = new_text;
 		}
-
-		std::string get_type() const override {
-        	return "Text";
-		}
 };
 
-class Element : public BaseNode
+class Tag
 {
 	private:
 		string tag;
 
 	public:
-		Element(const string& tag, BaseNode* parent) : tag(tag) 
-		{
-			this->parent = parent;
-		}
+		Tag(const string& tag) : tag(tag) {}
 
 		string get_tag() const
 		{
@@ -97,14 +50,9 @@ class Element : public BaseNode
 		{
 			tag = new_tag;
 		}
-
-		std::string get_type() const override 
-		{
-        	return "Element";
-		}
 };
 
-using Token = std::variant<std::unique_ptr<Text>, std::unique_ptr<Element>>;
+using Token = std::variant<Text, Tag>;
 
 static string find_font_variant(
     const vector<string>& available_fonts,
@@ -119,6 +67,18 @@ static string find_font_variant(
 bool contains(const std::string& haystack, const std::string& needle) {
     return haystack.find(needle) != std::string::npos;
 }
+
+struct RenderedTextSegment
+{
+	string text;
+	float x, y;
+	float scale;
+	glm::vec3 color;
+
+	string font_type;
+	float weight;
+};
+std::vector<RenderedTextSegment> display_list;
 
 
 // PARSER
@@ -140,15 +100,31 @@ class Layout
 
 		map<string,string> font_types;
 		string font;
-		float default_font_size = 12.0f; 
-		float font_size = 12.0f;
+		float font_size;
 
 		vector<Token> tokens;
 
+		float HSTEP = 13.0f; // Horizontal step for text rendering
+		float VSTEP = 18.0f; // Vertical step for text rendering
+
+		float base_font_size;
+
+		float desired_px;
+		float glyph_px;
+
+		float line_height;
+
+
+		float cursor_x, cursor_y;
+		float scale;
+		vector<RenderedTextSegment> line;
+
 	public:
 		Layout(Shader& shader, float start_x, float start_y, map<string,string> types)
-		: s(shader), start_x(start_x), start_y(start_y), weight(400.0f), style("regular"), font_types(types) // Initializer list???? what the C++
+		: s(shader), start_x(start_x), start_y(start_y), weight(400.0f), style("regular"), font_types(types), base_font_size(12.0f), glyph_px(48.0f), cursor_x(start_x), cursor_y(start_y) // Initializer list???? what the C++
 		{
+
+			font_size = base_font_size;
 
 			try
 			{
@@ -186,11 +162,19 @@ class Layout
 
 		float set_cursor_x(float new_x)
 		{
-			this->start_x = new_x;
+
+			this->cursor_x = new_x;
+			return this->cursor_x; 
+
 		}
+
+		
 		float set_cursor_y(float new_y)
 		{
-			this->start_y = new_y;
+
+			this->cursor_y = new_y;
+			return this->cursor_y; 
+
 		}
 
 		void lex(string body)
@@ -222,7 +206,7 @@ class Layout
 
 					if(!buffer.empty())
 					{
-						Element tagToken(buffer);
+						Tag tagToken(buffer);
 						out.emplace_back(tagToken);
 						buffer.clear();
 					}
@@ -249,46 +233,263 @@ class Layout
 
 		// RENDERING
 
-		void render(float screen_width, float screen_height, float dpi_scale)
+		void flush(float screen_width, float screen_height)
+		{
+			if(line.empty()) return; // Nothing to render
+
+			std::vector<float> ascents;
+
+			for (const auto& segment : line) {
+				ascents.push_back(metrics(segment.font_type, "ascent"));
+			}
+
+			// Find maximum ascent
+			float max_ascent = 0.0f;
+			if (!ascents.empty()) {
+				max_ascent = *std::max_element(ascents.begin(), ascents.end());
+			}
+
+			float baseline = cursor_y + 1.25f * max_ascent;
+
+			for (const auto& segment : line) 
+			{
+
+				RenderedTextSegment segment_corrected = segment;
+				segment_corrected.y = baseline - metrics(segment_corrected.font_type, "ascent");
+
+				try
+				{
+					set_active_font(segment_corrected.font_type);
+				}
+
+				catch(const std::exception& e)
+				{
+					std::cerr << "PUSZTABROWSER: Setting font failed: " << e.what() << '\n';
+					exit(1);
+				}
+
+				if(is_variable_font(segment_corrected.font_type))
+				{
+					set_font_weight(segment_corrected.font_type, segment_corrected.weight);
+				}
+
+				render_text(s, segment_corrected.text, segment_corrected.x, segment_corrected.y, segment_corrected.scale, segment_corrected.color, screen_width, screen_height);
+			}
+
+			cursor_x = start_x; 
+			line.clear();
+		}
+
+		void word(string word_text, float screen_width, float screen_height)
 		{
 
+			float w = measure_text(word_text, scale);
+
+			if((cursor_x + w > screen_width - HSTEP))
+			{
+				/*cursor_y -= metrics("linespace") * 1.25;
+				cursor_x = this->start_x;*/
+
+				flush(screen_width, screen_height);
+				cursor_y -= VSTEP;
+			}
+
+			//render_text(s, word, cursor_x, cursor_y, scale, glm::vec3(0.0f, 0.0f, 0.0f), screen_width, screen_height);
+			RenderedTextSegment segment = {
+				word_text,
+				cursor_x,
+				cursor_y,
+				scale,
+				glm::vec3(0.0f, 0.0f, 0.0f),
+				this->font,
+				this->weight
+			};
+			line.push_back(segment);
+			cursor_x += w + measure_text(" ", scale);
+		}
+
+		void token(Token token, float screen_width, float screen_height)
+		{
+			if (const Text* pText = get_if<Text>(&token)) 
+			{
+
+				/*render_text(s, pText->get_text(), cursor_x, cursor_y, font_size, glm::vec3(0.0f, 0.0f, 0.0f), screen_width, screen_height);
+				
+
+				float text_width = text.size() * font_size * 0.6f;
+
+				// Next line
+				cursor_y -= calculate_content_height(this->font, pText->get_text(), font_size, screen_width) * 1.2f;*/
+
+				// Check if token is empty or whitespace
+				string text = pText->get_text();
+				if (text.empty() || all_of(text.begin(), text.end(), [](unsigned char c) { return ::isspace(c); })) 
+				{
+					return; 
+				}
+
+				// Early culling - don't render if way off screen
+				/*if (cursor_y > screen_height + this->line_height || cursor_y < -this->line_height) 
+				{
+					cursor_y -= metrics("linespace") * 1.25;
+					cursor_x = this->start_x;
+					continue;
+				}*/
+
+				for(string word_text : split(text, " "))
+				{
+					word(word_text, screen_width, screen_height);
+				}
+			}
+			else if (const Tag* pTag = get_if<Tag>(&token)) 
+			{
+
+				this->font = this->font_types["regular"];
+				font_size = base_font_size;
+
+				// tok holds a Tag
+				string tagName = pTag->get_tag();
+
+				vector<string> supported_tags = {"b", "strong", "i", "em", "h1", "p", "big", "small"};
+				bool isClosingTag = (tagName[0] == '/');
+				string tag_clean = "";
+
+				// For opening tags, just clean the tag name
+				vector<string> tag_parts = split(tagName, " ");
+				if (!tag_parts.empty()) {
+					tag_clean = tag_parts[0];
+				} else {
+					tag_clean = tagName;
+				}
+
+				if(tag_clean == "b" || tag_clean == "strong")
+				{
+					this->weight = 700.0f; 
+				}
+
+				else if(tag_clean == "i" || tag_clean == "em")
+				{
+					this->font = this->font_types["italic"];
+				}
+
+				else if(tag_clean == "h1")
+				{
+					font_size = base_font_size + 8;
+				}
+
+				else if(tag_clean == "big")
+				{
+					font_size = base_font_size + 4;
+				}
+
+				else if(tag_clean == "small")
+				{
+					font_size = base_font_size - 2;
+				}
+
+
+
+				else if(tag_clean == "p")
+				{
+					font_size = 12.0f;
+					
+				}
+
+				else if(tag_clean == "/b" || tag_clean == "/strong")
+				{
+					this->weight = 400.0f;
+				}
+
+				else if(tag_clean == "/i" || tag_clean == "/em")
+				{
+					this->font = this->font_types["regular"];
+				}
+
+				else if(tag_clean == "/h1")
+				{
+					font_size = base_font_size;				
+				}
+
+				else if(tag_clean == "/big")
+				{
+					font_size = base_font_size;
+				}
+
+				else if(tag_clean == "/small")
+				{
+					font_size = base_font_size;
+				}
+
+				else if(tag_clean == "/p")
+				{
+					font_size = base_font_size;				
+				}
+				else
+				{
+					this->font = this->font_types["regular"];
+					this->weight = 400.0f;
+					font_size = base_font_size;			
+				}
+
+				/*desired_px = pixel_dpi(font_size, dpi_scale);
+				scale = desired_px / glyph_px;
+				if (scale < 0.2f) scale = 0.2f;
+				line_height = desired_px * 1.2f;*/
+
+				/*try
+				{
+					set_active_font(this->font);
+				}
+				catch(const std::exception& e)
+				{
+					std::cerr << "PUSZTABROWSER: Setting " << style << " fonttype failed: " << e.what() << '\n';
+					exit(1);
+				}
+
+				if(is_variable_font(this->font))
+				{
+					set_font_weight(this->font, this->weight);
+				}*/
+
+
+
+			}
+		}
+
+		void render(float screen_width, float screen_height, float dpi_scale)
+		{
 			stack<bool> render_stack;
 			render_stack.push(true); // Start with rendering enabled
 
-			float cursor_x = this->start_x;
-			float cursor_y = this->start_y;
+			cursor_x = this->start_x;
+			cursor_y = this->start_y;
 
-			float HSTEP = 13.0f; // Horizontal step for text rendering
-			float VSTEP = 18.0f; // Vertical step for text rendering
 
 			//render_text(s, "A KURVA ANYÁD", 50.0f, (float)(screen_height - 200), font_size, glm::vec3(0.0f, 0.0f, 0.0f), screen_width, screen_height);
 
-			//cout << "Rendering layout with " << this->tokens.size() << " tokens." << endl;
+			//cout << "Rendering layout with " << this->tokens.size() << " tokens" << endl;
 
 			this->font = this->font_types["regular"];
-			font_size = 12.0f; // Font size in points
+			font_size = base_font_size; // Font size in points
 
-			// Calculate scale once at the beginning and update when font_size changes
-			float desired_px = pixel_dpi(font_size, dpi_scale);
-			float glyph_px = 48.0f; // Your loaded glyph size
-			float scale = desired_px / glyph_px;
+			desired_px = pixel_dpi(font_size, dpi_scale);
+			scale = desired_px / glyph_px;
 
 			// Ensure minimum readable size
 			if (scale < 0.2f) scale = 0.2f;
 
-			float line_height = desired_px * 1.2f; // Standard line height
+			line_height = desired_px * 1.2f; // Standard line height
 
 			//cout << "Font size: " << font_size << "pt, Scale: " << scale << ", Line height: " << line_height << endl;
 
 			for (const auto& tok : this->tokens)
 			{
 
-				// Print if token is Element
 
 				if (const Text* pText = get_if<Text>(&tok)) 
 				{
 
-					// Check if token is empty or whitespace
+					// token is empty or whitespace
 					string text = pText->get_text();
 					if (text.empty() || all_of(text.begin(), text.end(), [](unsigned char c) { return ::isspace(c); })) 
 					{
@@ -311,11 +512,11 @@ class Layout
 					// Next line
 					cursor_y -= calculate_content_height(this->font, pText->get_text(), font_size, screen_width) * 1.2f;*/
 
-					for(string word : split(text, " "))
+					for(string word_text : split(text, " "))
 					{
 
 
-						float w = measure_text(word, scale);
+						float w = measure_text(word_text, scale);
 
 						if((cursor_x + w > screen_width - HSTEP))
 						{
@@ -323,20 +524,20 @@ class Layout
 							cursor_x = this->start_x;
 						}
 
-						render_text(s, word, cursor_x, cursor_y, scale, glm::vec3(0.0f, 0.0f, 0.0f), screen_width, screen_height);
+						render_text(s, word_text, cursor_x, cursor_y, scale, glm::vec3(0.0f, 0.0f, 0.0f), screen_width, screen_height);
 						cursor_x += w + measure_text(" ", scale);
 					}
-					cursor_y -= metrics("linespace") * 1.25;
-					cursor_x = this->start_x;
+					/*cursor_y -= metrics("linespace") * 1.25;
+					cursor_x = this->start_x;*/
 				
 				}
-				else if (const Element* pTag = get_if<Element>(&tok)) 
+				else if (const Tag* pTag = get_if<Tag>(&tok)) 
 				{
 
 					this->font = this->font_types["regular"];
-					font_size = 12.0f;
+					font_size = base_font_size;
 
-					// tok holds a Element
+					// tok holds a Tag
 					string tagName = pTag->get_tag();
 
 					vector<string> supported_tags = {"b", "strong", "i", "em", "h1", "p", "big", "small"};
@@ -363,25 +564,27 @@ class Layout
 
 					else if(tag_clean == "h1")
 					{
-						font_size = default_font_size + 8.0f; 
+						font_size = base_font_size + 8;
 						
 					}
 
 					else if(tag_clean == "big")
 					{
-						font_size = default_font_size + 4.0f;
+						font_size = base_font_size + 4;
+						
 					}
 
 					else if(tag_clean == "small")
 					{
-						font_size = default_font_size - 2.0f;
+						font_size = base_font_size - 2;
+						
 					}
 
 
 
 					else if(tag_clean == "p")
 					{
-						font_size = 12.0f;
+						font_size = base_font_size;
 						
 					}
 
@@ -397,29 +600,32 @@ class Layout
 
 					else if(tag_clean == "/h1")
 					{
-						font_size = default_font_size;
+						font_size = base_font_size;
 						
 					}
 
 					else if(tag_clean == "/big")
 					{
-						font_size = default_font_size;
+						font_size = base_font_size;
+						
 					}
 
 					else if(tag_clean == "/small")
 					{
-						font_size = default_font_size;
+						font_size = base_font_size;
+						
 					}
 
 					else if(tag_clean == "/p")
 					{
-						font_size = default_font_size;
+						font_size = base_font_size;
+						
 					}
 					else
 					{
 						this->font = this->font_types["regular"];
 						this->weight = 400.0f;
-						font_size = default_font_size;	
+						font_size = base_font_size;
 					}
 
 					desired_px = pixel_dpi(font_size, dpi_scale);
@@ -505,16 +711,16 @@ class Layout
 		if (const Text* pText = get_if<Text>(&tok)) {
 			total_height += calculate_content_height(regular_font, pText->get_text(), text_size, screen_width);
 		}
-		else if (const Element* pTag = get_if<Element>(&tok)) {
+		else if (const Tag* pTag = get_if<Tag>(&tok)) {
 			string tagName = pTag->get_tag();
 
 			if(tagName == "h1")
 			{
-				total_height += text_size * 2; // Example height for h1
+				total_height += text_size * 2; 
 			}
 			else if(tagName == "p")
 			{
-				total_height += text_size; // Example height for paragraph
+				total_height += text_size; 
 			}
 		}
 	}
