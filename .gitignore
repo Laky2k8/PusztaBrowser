@@ -39,3 +39,17 @@
 
 # debug information files
 *.dwo
+
+# Unneeded directories
+include/
+lib/
+.vscode/
+.devlog/
+
+# Unneeded files
+guide.png
+imgui.ini
+test_file.txt
+
+# Build stuff
+Makefile
