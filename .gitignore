@@ -41,10 +41,12 @@
 *.dwo
 
 # Unneeded directories
-include/
-lib/
-.vscode/
-.devlog/
+include
+lib
+.vscode
+.devlog
+src/old
+src/imgui
 
 # Unneeded files
 guide.png
