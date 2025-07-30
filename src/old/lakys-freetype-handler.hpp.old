@@ -1,0 +1,452 @@
+#include <glad/glad.h>
+#define GLFW_INCLUDE_NONE      // if you include GLFW anywhere in this header
+#include <GLFW/glfw3.h>
+#include <glm/glm.hpp>
+#include <glm/gtc/type_ptr.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <map>
+#include <cstdlib>
+#include <iostream>
+#include <string>
+#include <codecvt>
+#include <locale>
+#include "laky_shader.h"
+
+// FreeType header
+#include <ft2build.h>
+#include FT_FREETYPE_H 
+
+using namespace std;
+
+FT_Library ft; // FreeType library handle
+FT_Face face; // FreeType font face handle
+
+struct Character {
+    unsigned int TextureID;  // ID handle of the glyph texture
+    glm::ivec2   Size;       // Size of glyph
+    glm::ivec2   Bearing;    // Offset from baseline to left/top of glyph
+    unsigned int Advance;    // Offset to advance to next glyph
+};
+
+struct FontInfo {
+    FT_Face face;
+    map<char32_t, Character> characters;
+    string font_path;
+    bool loaded;
+    
+    FontInfo() : face(nullptr), loaded(false) {}
+};
+
+glm::mat4 projection;
+
+map<string, FontInfo> fonts;
+map<char32_t, Character> Characters;
+
+int lfh_init_freetype(float screen_width, float screen_height)
+{
+    setlocale(LC_ALL, "");
+    
+    // Use screen coordinates: (0,0) at top-left, (width,height) at bottom-right
+    projection = glm::ortho(0.0f, screen_width, 0.0f, screen_height);
+    
+    cout << "Initializing FreeType with screen size: " << screen_width << "x" << screen_height << endl;
+
+    // Initialize FreeType library once
+    if (FT_Init_FreeType(&ft))
+    {
+        cerr << "LFH ERROR::FREETYPE: Could not init FreeType Library" << endl;
+        return -1;
+    }
+    
+    return 0;
+}
+
+int load_font(const string& font_name, const char* font_path)
+{
+    // Check if font already exists
+    if (fonts.find(font_name) != fonts.end() && fonts[font_name].loaded) {
+        cout << "Font '" << font_name << "' already loaded" << endl;
+        return 0;
+    }
+    
+    FontInfo& font_info = fonts[font_name];
+    
+    // Load the font face
+    if (FT_New_Face(ft, font_path, 0, &font_info.face))
+    {
+        cerr << "LFH ERROR::FREETYPE: Failed to load font: " << font_path << endl;
+        fonts.erase(font_name); // Remove failed entry
+        return -1;
+    }
+    
+    FT_Select_Charmap(font_info.face, FT_ENCODING_UNICODE);
+    
+    font_info.font_path = font_path;
+    font_info.loaded = true;
+    
+    cout << "Successfully loaded font '" << font_name << "': " << font_path << endl;
+    
+    // Set as current font if it's the first one loaded
+    if (current_font.empty()) {
+        current_font = font_name;
+    }
+    
+    return 0;
+}
+
+void load_characters(const string& font_name, int glyph_size)
+{
+    FT_Select_Charmap(face, FT_ENCODING_UNICODE);
+	FT_Set_Pixel_Sizes(face, 0, glyph_size);
+
+	// Clear character map
+	Characters.clear();
+
+	glPixelStorei(GL_UNPACK_ALIGNMENT, 1); // Disable byte-alignment restriction
+
+	for (wchar_t c = 0x0; c <= 0x024F; ++c)
+	{
+		// Load character glyph
+		if(FT_Load_Char(face, c, FT_LOAD_RENDER))
+		{
+			cerr << "LFH ERROR::FREETYPE: Failed to load glyph " << c << endl;
+			continue;
+		}
+
+		// Generate texture
+		unsigned int texture;
+		glGenTextures(1, &texture);
+		glBindTexture(GL_TEXTURE_2D, texture);
+		glTexImage2D(
+			GL_TEXTURE_2D,
+			0,
+			GL_RED,
+			face->glyph->bitmap.width,
+			face->glyph->bitmap.rows,
+			0,
+			GL_RED,
+			GL_UNSIGNED_BYTE,
+			face->glyph->bitmap.buffer
+		);
+
+		// Set texture options
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+		// Save into hashmap
+		Character character = {
+			texture, 
+			glm::ivec2(face->glyph->bitmap.width, face->glyph->bitmap.rows),
+			glm::ivec2(face->glyph->bitmap_left, face->glyph->bitmap_top),
+			face->glyph->advance.x
+		};
+		Characters.insert({c, character});
+	}
+}
+
+void render_text(Shader &s, string text, float x, float y, float scale, glm::vec3 color, float screen_width, float screen_height)
+{
+    
+    // Use screen coordinates: (0,0) at top-left, (width,height) at bottom-right
+    projection = glm::ortho(0.0f, screen_width, 0.0f, screen_height);
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);  
+
+    unsigned int VAO, VBO;
+    glGenVertexArrays(1, &VAO);
+    glGenBuffers(1, &VBO);
+    glBindVertexArray(VAO);
+    glBindBuffer(GL_ARRAY_BUFFER, VBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 6 * 4, NULL, GL_DYNAMIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float), 0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindVertexArray(0);      
+
+    // activate corresponding render state	
+    s.use();
+    s.setVec3f("textColor", color);
+    s.setMat4("projection", projection);
+
+    // Set texture uniform to texture unit 0
+    s.setInt("text", 0);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindVertexArray(VAO);
+
+    float initial_x = x;
+
+    //cout << "Rendering text: '" << text << "' at position (" << x << ", " << y << ") with scale " << scale << endl;
+
+    // Convert to wide string for Unicode support
+    std::wstring_convert<std::codecvt_utf8<char32_t>, char32_t> conv;
+    std::u32string utf32;
+    bool unicode_rendering = true;
+    try {
+        utf32 = conv.from_bytes(text);
+    } catch (const std::range_error& e) {
+        std::cerr << "UTF-8 conversion failed: " << e.what() << std::endl;
+        unicode_rendering = false;
+        // Optionally, print or log the input string for analysis
+    }
+
+    // iterate through all characters
+    if(unicode_rendering)
+    {
+        for (char32_t codepoint : utf32)
+        {
+            // Check if codepoint is in your Characters map
+            auto it = Characters.find(codepoint);
+            if (it == Characters.end()) continue;
+            Character ch = it->second;
+
+            // Check for newline character
+            if (codepoint == U'\n') {
+                x = initial_x; // Reset x to initial position
+                y -= ch.Size.y * scale; // Move down by the height of the character
+                continue;
+            }
+
+            // Check for tab character
+            if (codepoint == U'\t') {
+                // Move x forward by 4 times the width of a space character
+                x += 8 * (Characters[' '].Advance >> 6) * scale; // Advance is in 1/64 pixels
+                continue;
+            }
+
+            // Skip control characters
+            if (codepoint < 32) {
+                continue; // Skip characters outside the printable ASCII range
+            }
+
+
+            float xpos = x + ch.Bearing.x * scale;
+            float ypos = y - (ch.Size.y - ch.Bearing.y) * scale;
+
+            float w = ch.Size.x * scale;
+            float h = ch.Size.y * scale;
+
+            // Check if character is off the screen
+            if (xpos + w < 0 || xpos > screen_width || ypos + h < 0 || ypos > screen_height) {
+                continue; // Skip rendering this character
+            }
+
+            // update VBO for each character
+            float vertices[6][4] = {
+                { xpos,     ypos + h,   0.0f, 0.0f },            
+                { xpos,     ypos,       0.0f, 1.0f },
+                { xpos + w, ypos,       1.0f, 1.0f },
+
+                { xpos,     ypos + h,   0.0f, 0.0f },
+                { xpos + w, ypos,       1.0f, 1.0f },
+                { xpos + w, ypos + h,   1.0f, 0.0f }           
+            };
+            // render glyph texture over quad
+            glBindTexture(GL_TEXTURE_2D, ch.TextureID);
+            // update content of VBO memory
+            glBindBuffer(GL_ARRAY_BUFFER, VBO);
+            glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices); 
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+            // render quad
+            glDrawArrays(GL_TRIANGLES, 0, 6);
+            // now advance cursors for next glyph (note that advance is number of 1/64 pixels)
+            x += (ch.Advance >> 6) * scale; // bitshift by 6 to get value in pixels (2^6 = 64)
+        }
+    }
+    else
+    {
+        // iterate through all characters
+        std::string::const_iterator c;
+        for (c = text.begin(); c != text.end(); c++)
+        {
+            Character ch = Characters[*c];
+
+            // Check for newline character
+            if (*c == '\n') {
+                x = initial_x; // Reset x to initial position
+                y -= ch.Size.y * scale; // Move down by the height of the character
+                continue;
+            }
+
+            // Check for tab character
+            if (*c == '\t') {
+                // Move x forward by 4 times the width of a space character
+                x += 8 * (Characters[' '].Advance >> 6) * scale; // Advance is in 1/64 pixels
+                continue;
+            }
+
+            // Skip control characters
+            if (*c < 32 || *c > 126) {
+                continue; // Skip characters outside the printable ASCII range
+            }
+
+
+            float xpos = x + ch.Bearing.x * scale;
+            float ypos = y - (ch.Size.y - ch.Bearing.y) * scale;
+
+            float w = ch.Size.x * scale;
+            float h = ch.Size.y * scale;
+            // update VBO for each character
+            float vertices[6][4] = {
+                { xpos,     ypos + h,   0.0f, 0.0f },            
+                { xpos,     ypos,       0.0f, 1.0f },
+                { xpos + w, ypos,       1.0f, 1.0f },
+
+                { xpos,     ypos + h,   0.0f, 0.0f },
+                { xpos + w, ypos,       1.0f, 1.0f },
+                { xpos + w, ypos + h,   1.0f, 0.0f }           
+            };
+            // render glyph texture over quad
+            glBindTexture(GL_TEXTURE_2D, ch.TextureID);
+            // update content of VBO memory
+            glBindBuffer(GL_ARRAY_BUFFER, VBO);
+            glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices); 
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+            // render quad
+            glDrawArrays(GL_TRIANGLES, 0, 6);
+            // now advance cursors for next glyph (note that advance is number of 1/64 pixels)
+            x += (ch.Advance >> 6) * scale; // bitshift by 6 to get value in pixels (2^6 = 64)
+        }
+    }
+    glBindVertexArray(0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    
+    // Clean up VAO and VBO
+    glDeleteVertexArrays(1, &VAO);
+    glDeleteBuffers(1, &VBO);
+}
+
+
+float calculate_content_height(const std::string& text, float scale, float screen_width) {
+    if (text.empty()) return 0.0f;
+    
+    float x = 0.0f;
+    float y = 0.0f;
+    float max_y = 0.0f;
+    float line_height = 0.0f;
+    
+    // Calculate line height from the tallest character (you might want to use a specific character like 'A' or 'H')
+    if (Characters.find('A') != Characters.end()) {
+        line_height = Characters['A'].Size.y * scale;
+    } else if (!Characters.empty()) {
+        line_height = Characters.begin()->second.Size.y * scale;
+    }
+    
+    // Convert to wide string for Unicode support (same as render_text)
+    std::wstring_convert<std::codecvt_utf8<char32_t>, char32_t> conv;
+    std::u32string utf32;
+    bool unicode_rendering = true;
+    
+    try {
+        utf32 = conv.from_bytes(text);
+    } catch (const std::range_error& e) {
+        unicode_rendering = false;
+    }
+    
+    if (unicode_rendering) {
+        for (char32_t codepoint : utf32) {
+            // Check if codepoint is in your Characters map
+            auto it = Characters.find(codepoint);
+            if (it == Characters.end()) continue;
+            
+            Character ch = it->second;
+            
+            // Handle newline character
+            if (codepoint == U'\n') {
+                x = 0.0f; // Reset x to initial position
+                y += line_height; // Move down by line height
+                max_y = std::max(max_y, y + line_height);
+                continue;
+            }
+            
+            // Handle tab character
+            if (codepoint == U'\t') {
+                x += 8 * (Characters[' '].Advance >> 6) * scale;
+                continue;
+            }
+            
+            // Skip control characters
+            if (codepoint < 32) {
+                continue;
+            }
+            
+            float char_width = (ch.Advance >> 6) * scale;
+            float char_height = ch.Size.y * scale;
+            
+            // Check if character would exceed screen width (word wrapping)
+            if (x + char_width > screen_width && x > 0) {
+                x = 0.0f; // Reset to start of new line
+                y += line_height; // Move down by line height
+            }
+            
+            // Update max_y to track the bottom of the content
+            max_y = std::max(max_y, y + char_height);
+            
+            // Advance x position
+            x += char_width;
+        }
+    } else {
+        // Fallback to ASCII rendering (same logic as render_text)
+        for (char c : text) {
+            auto it = Characters.find(c);
+            if (it == Characters.end()) continue;
+            
+            Character ch = it->second;
+            
+            // Handle newline character
+            if (c == '\n') {
+                x = 0.0f;
+                y += line_height;
+                max_y = std::max(max_y, y + line_height);
+                continue;
+            }
+            
+            // Handle tab character
+            if (c == '\t') {
+                x += 8 * (Characters[' '].Advance >> 6) * scale;
+                continue;
+            }
+            
+            // Skip control characters
+            if (c < 32 || c > 126) {
+                continue;
+            }
+            
+            float char_width = (ch.Advance >> 6) * scale;
+            float char_height = ch.Size.y * scale;
+            
+            // Check if character would exceed screen width (word wrapping)
+            if (x + char_width > screen_width && x > 0) {
+                x = 0.0f;
+                y += line_height;
+            }
+            
+            // Update max_y to track the bottom of the content
+            max_y = std::max(max_y, y + char_height);
+            
+            // Advance x position
+            x += char_width;
+        }
+    }
+    
+    // Return the total height needed
+    return max_y > 0 ? max_y : line_height;
+}
+
+
+// Add cleanup function
+void lfh_cleanup()
+{
+    // Clean up character textures
+    for (auto& pair : Characters) {
+        glDeleteTextures(1, &pair.second.TextureID);
+    }
+    Characters.clear();
+    
+    // Clean up FreeType
+    FT_Done_Face(face);
+    FT_Done_FreeType(ft);
+}

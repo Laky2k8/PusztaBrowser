@@ -1,0 +1,154 @@
+#pragma once
+
+#ifndef LAKYS_SOCKET_HANDLER_HPP
+#define LAKYS_SOCKET_HANDLER_HPP
+
+#define _HAS_STD_BYTE 0
+
+#include <string>
+#include <iostream>
+#include <stdexcept>
+#include "StringSplitter.hpp"
+#include "PusztaParser.hpp"
+#include "socket/TcpClientSocket.hpp"
+
+using namespace std;
+
+class HTTP
+{
+private:
+    string scheme;
+    string url;
+    string host;
+    string path;
+    int port;
+    string body;
+    string headers;
+
+public:
+    HTTP() : scheme(""), url(""), host(""), path(""), port(80) {}
+
+    void set(const string& url)
+    {
+        // Split by scheme
+        vector<string> scheme_parts = split(url, "://");
+        if(scheme_parts.size() != 2)
+        {
+            cerr << "Invalid URL format: " << url << endl;
+            throw invalid_argument("Invalid URL format");
+        }
+        
+        this->scheme = scheme_parts[0];
+        string url_without_scheme = scheme_parts[1];
+
+        // Fixed logic: scheme must be either http OR https
+        if(this->scheme.empty() || url_without_scheme.empty() || this->scheme != "http")
+        {
+            cerr << "Invalid URL format or unsupported scheme: " << url << endl;
+            throw invalid_argument("Invalid URL format or unsupported scheme");
+        }
+
+        // Set default ports
+        if(this->scheme == "http")
+        {
+            this->port = 80;
+        }
+
+        // Split the URL without scheme to get host and path
+        vector<string> parts = split(url_without_scheme, "/");
+        
+        if(parts.empty())
+        {
+            cerr << "Invalid URL format: " << url << endl;
+            throw invalid_argument("Invalid URL format");
+        }
+
+        this->host = parts[0];
+
+        // Check for custom port
+        if(contains(host, ":"))
+        {
+            vector<string> host_parts = split(host, ":");
+            this->host = host_parts[0];
+            try {
+                this->port = stoi(host_parts[1]);
+            } catch (const invalid_argument& e) {
+                cerr << "Invalid port number in URL: " << url << endl;
+                throw invalid_argument("Invalid port number in URL");
+            }
+        }
+        
+        // Construct the path
+        if(parts.size() > 1)
+        {
+            this->path = "/";
+            for(size_t i = 1; i < parts.size(); i++)
+            {
+                this->path += parts[i];
+                if(i < parts.size() - 1) this->path += "/";
+            }
+        }
+        else
+        {
+            this->path = "/";
+        }
+    }
+
+	string request()
+	{
+		TcpClientSocket socket(this->host.c_str(), this->port);
+		socket.openConnection();
+
+		string request;
+		request += "GET " + this->path + " HTTP/1.1\r\n";
+		request += "Host: " + this->host + "\r\n";
+		request += "Connection: close\r\n";
+		request += "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36\r\n";
+
+		request += "\r\n";
+		cout << request;
+
+		if(!socket.sendData((void*)request.c_str(), request.size()))
+		{
+			cerr << "Failed to send request to " << this->host << endl;
+			return "";
+		}
+
+		char response[4096];
+		socket.receiveData((void*)response, sizeof(response) - 1);
+		cout << "Response from " << this->host << ":\n" << response << endl;
+
+		socket.closeConnection();
+
+		// Ensure the response is null-terminated
+		response[sizeof(response) - 1] = '\0';
+
+		// Seperate headers and body
+		string response_str(response);
+		size_t header_end = response_str.find("\r\n\r\n");
+		if(header_end == string::npos)
+		{
+			cerr << "Invalid response format from " << this->host << endl;
+			return "";
+		}
+		this->headers = response_str.substr(0, header_end);
+		this->body = response_str.substr(header_end + 4); // Skip the "\r\n\r\n"
+		cout << "Headers:\n" << this->headers << endl;
+		cout << "Body:\n" << this->body << endl;
+
+		if(!this->body.empty())
+		{
+			string body_clean = parse_remove_tags(this->body);
+			return body_clean;
+		}
+		else
+		{
+			return "Body not found. Tags:\n\n" + this->headers;
+		}
+		
+
+
+	}
+};
+
+#endif
