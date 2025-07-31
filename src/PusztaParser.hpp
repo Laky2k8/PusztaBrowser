@@ -14,13 +14,17 @@
 
 using namespace std;
 
+
 class Text
 {
 	private:
 		string text;
+		void* parent;
+		std::vector<std::shared_ptr<void>> children;
 
 	public:
-		Text(const string& text) : text(text) {}
+		Text(const string& text) : text(text), parent(nullptr) {}
+		Text(const std::string& text, void* parent) : text(text), parent(parent) {}
 
 		string get_text() const
 		{
@@ -31,15 +35,31 @@ class Text
 		{
 			text = new_text;
 		}
+
+		void* get_parent() const { return parent; }
+		void set_parent(void* new_parent) { parent = new_parent; }
+		
+		void add_child(std::shared_ptr<void> child) 
+		{
+			children.push_back(child);
+		}
+		
+		const std::vector<std::shared_ptr<void>>& get_children() const 
+		{
+			return children;
+		}
 };
 
-class Tag
+class Element
 {
 	private:
 		string tag;
+		void* parent;
+		std::vector<std::shared_ptr<void>> children;
 
 	public:
-		Tag(const string& tag) : tag(tag) {}
+		Element(const string& tag) : tag(tag), parent(nullptr) {}
+		Element(const std::string& tag, void* parent) : tag(tag), parent(parent) {}
 
 		string get_tag() const
 		{
@@ -50,9 +70,22 @@ class Tag
 		{
 			tag = new_tag;
 		}
+
+		void* get_parent() const { return parent; }
+		void set_parent(void* new_parent) { parent = new_parent; }
+		
+		void add_child(std::shared_ptr<void> child) 
+		{
+			children.push_back(child);
+		}
+		
+		const std::vector<std::shared_ptr<void>>& get_children() const 
+		{
+			return children;
+		}
 };
 
-using Token = std::variant<Text, Tag>;
+using Token = std::variant<Text, Element>;
 
 static string find_font_variant(
     const vector<string>& available_fonts,
@@ -84,6 +117,79 @@ std::vector<RenderedTextSegment> display_list;
 // PARSER
 class HTMLParser
 {
+	private:
+		string body;
+		std::vector<BaseNode*> unfinished;
+
+	public:
+		HTMLParser(const string& body) : body(body)
+		{
+			this->unfinished = vector<BaseNode*>();
+		}
+
+		void add_tag(string tag)
+		{
+
+		}
+
+		void add_text(string text)
+		{
+			
+		}
+
+		void parse(string body)
+		{
+			string buffer = "";
+			vector<Token> out;
+			bool in_tag = false;
+
+
+			for (int i = 0; i < body.size(); i++)
+			{
+				char c = body[i];
+
+				if(c == '<')
+				{
+					in_tag = true; // Start of a tag
+
+					if(!buffer.empty())
+					{
+						Text textToken(buffer);
+						out.emplace_back(textToken);
+						buffer.clear();
+					}
+				}
+				else if(c == '>')
+				{
+					in_tag = false; // End of a tag
+					cout << "Found tag: " << buffer << endl;
+
+					if(!buffer.empty())
+					{
+						Element tagToken(buffer);
+						out.emplace_back(tagToken);
+						buffer.clear();
+					}
+				}
+				else
+				{
+					buffer += c;
+
+					//cout << "Buffer: " << buffer << endl;
+				}
+
+
+			}
+
+			if(!in_tag && !buffer.empty())
+			{
+				Text textToken(buffer);
+				out.emplace_back(textToken);
+			}
+
+			this->tokens = out;
+
+		}
 
 };
 
@@ -206,7 +312,7 @@ class Layout
 
 					if(!buffer.empty())
 					{
-						Tag tagToken(buffer);
+						Element tagToken(buffer);
 						out.emplace_back(tagToken);
 						buffer.clear();
 					}
@@ -341,13 +447,13 @@ class Layout
 					word(word_text, screen_width, screen_height);
 				}
 			}
-			else if (const Tag* pTag = get_if<Tag>(&token)) 
+			else if (const Element* pTag = get_if<Element>(&token)) 
 			{
 
 				this->font = this->font_types["regular"];
 				font_size = base_font_size;
 
-				// tok holds a Tag
+				// tok holds a Element
 				string tagName = pTag->get_tag();
 
 				/*vector<string> supported_tags = {"b", "strong", "i", "em", "h1", "p", "big", "small"};
@@ -529,13 +635,13 @@ class Layout
 					cursor_x = this->start_x;*/
 				
 				}
-				else if (const Tag* pTag = get_if<Tag>(&tok)) 
+				else if (const Element* pTag = get_if<Element>(&tok)) 
 				{
 
 					this->font = this->font_types["regular"];
 					font_size = base_font_size;
 
-					// tok holds a Tag
+					// tok holds a Element
 					string tagName = pTag->get_tag();
 
 					vector<string> supported_tags = {"b", "strong", "i", "em", "h1", "p", "big", "small"};
@@ -709,7 +815,7 @@ class Layout
 		if (const Text* pText = get_if<Text>(&tok)) {
 			total_height += calculate_content_height(regular_font, pText->get_text(), text_size, screen_width);
 		}
-		else if (const Tag* pTag = get_if<Tag>(&tok)) {
+		else if (const Element* pTag = get_if<Element>(&tok)) {
 			string tagName = pTag->get_tag();
 
 			if(tagName == "h1")
