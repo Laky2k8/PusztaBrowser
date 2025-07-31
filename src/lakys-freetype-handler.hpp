@@ -1,7 +1,7 @@
 #pragma once
 
 #include <glad/glad.h>
-#define GLFW_INCLUDE_NONE      // if you include GLFW anywhere in this header
+#define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -499,7 +499,6 @@ void render_text(Shader &s, const string& font_name, string text, float x, float
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);  
 
-    // Use pre-created VAO/VBO instead of creating new ones
     glBindVertexArray(global_text_VAO);
 
     // Only set shader state once per call
@@ -527,7 +526,7 @@ void render_text(Shader &s, const string& font_name, string text, float x, float
     {
         for (char32_t codepoint : utf32)
         {
-            auto it = Characters->find(codepoint);  // Use -> instead of .
+            auto it = Characters->find(codepoint);  
             if (it == Characters->end()) continue;
             const Character& ch = it->second;
 
@@ -538,7 +537,7 @@ void render_text(Shader &s, const string& font_name, string text, float x, float
             }
 
             if (codepoint == U'\t') {
-                auto space_it = Characters->find(' ');  // Use -> instead of .
+                auto space_it = Characters->find(' ');  
                 if (space_it != Characters->end()) {
                     x += 8 * (space_it->second.Advance >> 6) * scale;
                 }
@@ -552,9 +551,9 @@ void render_text(Shader &s, const string& font_name, string text, float x, float
             float w = ch.Size.x * scale;
             float h = ch.Size.y * scale;
 
-            // Enhanced culling check
+
             if (xpos + w < 0 || xpos > screen_width || ypos + h < 0 || ypos > screen_height) {
-                x += (ch.Advance >> 6) * scale; // Still advance cursor
+                x += (ch.Advance >> 6) * scale;
                 continue;
             }
 
@@ -577,10 +576,9 @@ void render_text(Shader &s, const string& font_name, string text, float x, float
     }
     else
     {
-        // Similar optimizations for ASCII path...
         for (char c : text)
         {
-            auto it = Characters->find(c);  // Use -> instead of .
+            auto it = Characters->find(c); 
             if (it == Characters->end()) continue;
             const Character& ch = it->second;
 
@@ -591,7 +589,7 @@ void render_text(Shader &s, const string& font_name, string text, float x, float
             }
 
             if (c == '\t') {
-                auto space_it = Characters->find(' ');  // Use -> instead of .
+                auto space_it = Characters->find(' '); 
                 if (space_it != Characters->end()) {
                     x += 8 * (space_it->second.Advance >> 6) * scale;
                 }

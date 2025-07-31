@@ -328,7 +328,7 @@ class Layout
 					return; 
 				}
 
-				// Early culling - don't render if way off screen
+				// don't render if off screen
 				/*if (cursor_y > screen_height + this->line_height || cursor_y < -this->line_height) 
 				{
 					cursor_y -= metrics("linespace") * 1.25;
@@ -350,11 +350,10 @@ class Layout
 				// tok holds a Tag
 				string tagName = pTag->get_tag();
 
-				vector<string> supported_tags = {"b", "strong", "i", "em", "h1", "p", "big", "small"};
-				bool isClosingTag = (tagName[0] == '/');
+				/*vector<string> supported_tags = {"b", "strong", "i", "em", "h1", "p", "big", "small"};
+				bool isClosingTag = (tagName[0] == '/');*/
 				string tag_clean = "";
 
-				// For opening tags, just clean the tag name
 				vector<string> tag_parts = split(tagName, " ");
 				if (!tag_parts.empty()) {
 					tag_clean = tag_parts[0];
@@ -462,7 +461,6 @@ class Layout
 			render_stack.push(true); // Start with rendering enabled
 
 			cursor_x = this->start_x;
-			cursor_y = this->start_y;
 
 
 			//render_text(s, "A KURVA ANYÁD", 50.0f, (float)(screen_height - 200), font_size, glm::vec3(0.0f, 0.0f, 0.0f), screen_width, screen_height);

@@ -318,7 +318,7 @@ public:
         if(this->status == 200)
         {
             cout << "HTTP Status: " << this->status << " " << this->status_message << endl;
-            cout << "renderin time" << endl;
+            cout << "rendering time" << endl;
             if(!this->body.empty())
             {
                 if(this->scheme == "view-source:http" || this->scheme == "view-source:https")

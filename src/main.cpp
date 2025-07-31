@@ -203,9 +203,8 @@ int main()
 		glClear(GL_COLOR_BUFFER_BIT);
 
 		/*// Size text according to the screen size
-		text_base_size = (TARGET_TEXT_SIZE * dpi_scale) / 48.0f; // 48 is your glyph size
+		text_base_size = (TARGET_TEXT_SIZE * dpi_scale) / 48.0f;
 		
-		// Optional: Add minimum and maximum bounds
 		text_base_size = std::max(0.2f, std::min(0.8f, text_base_size));*/
 
 		// Calculate diagonal resolution
