@@ -1,0 +1,639 @@
+#ifndef PUSZTAPARSER_HPP
+#define PUSZTAPARSER_HPP
+
+#include <string>
+#include <vector>
+#include <variant>
+#include <iostream>
+#include <map>
+#include <algorithm>
+#include <stack>
+#include <memory>
+#include <cctype>
+#include <stdexcept>
+#include <sstream>
+
+#include "laky_shader.h"
+#include "lakys-freetype-handler.hpp"
+#include "lakys-string-helper.hpp"
+
+using namespace std;
+
+// Tag classifications
+vector<string> tags_to_skip = { "head", "script", "style", "meta", "link", "title" };
+vector<string> self_closing_tags = { "br", "hr", "img", "input", "meta", "link", "area", "base", "col", "embed", "source", "track", "wbr" };
+vector<string> block_tags = { "html", "body", "article", "section", "nav", "aside", "h1", "h2", "h3", "h4", "h5", "h6", "hgroup", "header", "footer", "address", "p", "hr", "pre", "blockquote", "ol", "ul", "li", "dl", "dt", "dd", "figure", "figcaption", "main", "div", "table", "form", "fieldset", "legend", "details", "summary" };
+
+// HTML entity decoder
+map<string, string> html_entities = {
+    {"&lt;", "<"}, {"&gt;", ">"}, {"&amp;", "&"}, {"&quot;", "\""}, 
+    {"&apos;", "'"}, {"&nbsp;", " "}, {"&copy;", "©"}, {"&reg;", "®"}
+};
+
+string decode_html_entities(const string& str) {
+    string result = str;
+    for (const auto& entity : html_entities) {
+        size_t pos = 0;
+        while ((pos = result.find(entity.first, pos)) != string::npos) {
+            result.replace(pos, entity.first.length(), entity.second);
+            pos += entity.second.length();
+        }
+    }
+    return result;
+}
+
+string trim(const string& str) {
+    size_t first = str.find_first_not_of(" \t\n\r\f\v");
+    if (first == string::npos) return "";
+    size_t last = str.find_last_not_of(" \t\n\r\f\v");
+    return str.substr(first, (last - first + 1));
+}
+
+// Forward declarations
+class Node;
+class Element;
+class Text;
+
+using NodePtr = shared_ptr<Node>;
+using ElementPtr = shared_ptr<Element>;
+using TextPtr = shared_ptr<Text>;
+
+// Base Node class - FIXED with public inheritance
+class Node : public std::enable_shared_from_this<Node> {
+public:
+    NodePtr parent;
+    vector<NodePtr> children;
+    
+    virtual ~Node() = default;
+    virtual string get_text() const = 0;
+    virtual bool is_element() const = 0;
+    virtual void print(int depth = 0) const = 0;
+    
+    void add_child(NodePtr child) {
+        child->parent = shared_from_this();
+        children.push_back(child);
+    }
+};
+
+class Text : public Node {
+private:
+    string text;
+    
+public:
+    Text(const string& text) : text(decode_html_entities(trim(text))) {}
+    
+    string get_text() const override { return text; }
+    bool is_element() const override { return false; }
+    void print(int depth = 0) const override {
+        string indent(depth * 2, ' ');
+        cout << indent << "Text: \"" << text << "\"" << endl;
+    }
+    void set_text(const string& new_text) { text = new_text; }
+};
+
+class Element : public Node {  
+private:
+    string tag;
+    map<string, string> attributes;
+    map<string, string> computed_style;
+    
+public:
+    Element(const string& tag, const map<string, string>& attributes = {})
+        : tag(tag), attributes(attributes) {
+        // Convert tag to lowercase
+        transform(this->tag.begin(), this->tag.end(), this->tag.begin(), ::tolower);
+        // Parse style attribute if present
+        if (has_attribute("style")) {
+            computed_style = parse_style_attribute(get_attribute("style"));
+        }
+    }
+
+    string get_text() const override {
+        string result;
+        for (const auto& child : children) {
+            result += child->get_text();
+        }
+        return result;
+    }
+
+    bool is_element() const override {
+        return true;
+    }
+
+    void print(int depth = 0) const override {
+        string indent(depth * 2, ' ');
+        cout << indent << "Element: " << tag;
+        if (!attributes.empty()) {
+            cout << " [";
+            bool first = true;
+            for (const auto& attr : attributes) {
+                if (!first) cout << ", ";
+                cout << attr.first << "=\"" << attr.second << "\"";
+                first = false;
+            }
+            cout << "]";
+        }
+        cout << endl;
+        
+        for (const auto& child : children) {
+            child->print(depth + 1);
+        }
+    }
+
+    // Getters
+    string get_tag() const { return tag; }
+    
+    string get_attribute(const string& name) const {
+        auto it = attributes.find(name);
+        return (it != attributes.end()) ? it->second : "";
+    }
+
+    bool has_attribute(const string& name) const {
+        return attributes.find(name) != attributes.end();
+    }
+
+    const map<string, string>& get_attributes() const {
+        return attributes;
+    }
+
+    bool is_self_closing() const {
+        return find(self_closing_tags.begin(), self_closing_tags.end(), tag) != self_closing_tags.end();
+    }
+
+    bool is_block_element() const {
+        return find(block_tags.begin(), block_tags.end(), tag) != block_tags.end();
+    }
+
+    // Style methods
+    map<string, string> parse_style_attribute(const string& style_str) {
+        map<string, string> styles;
+        stringstream ss(style_str);
+        string declaration;
+        
+        while (getline(ss, declaration, ';')) {
+            size_t colon_pos = declaration.find(':');
+            if (colon_pos != string::npos) {
+                string property = trim(declaration.substr(0, colon_pos));
+                string value = trim(declaration.substr(colon_pos + 1));
+                
+                transform(property.begin(), property.end(), property.begin(), ::tolower);
+                styles[property] = value;
+            }
+        }
+        
+        return styles;
+    }
+
+    string get_style(const string& property) const {
+        auto it = computed_style.find(property);
+        return (it != computed_style.end()) ? it->second : "";
+    }
+
+    void set_style(const string& property, const string& value) {
+        computed_style[property] = value;
+    }
+
+    const map<string, string>& get_computed_style() const {
+        return computed_style;
+    }
+};
+
+// Tag parsing
+tuple<string, map<string, string>, bool> parse_tag(const string& body) {
+    string tag_name = "";
+    map<string, string> attributes;
+    bool is_closing = false;
+
+    if (body.empty()) {
+        return make_tuple(tag_name, attributes, is_closing);
+    }
+
+    int i = 0;
+    
+    if (body[i] == '/') {
+        is_closing = true;
+        i++;
+    }
+
+    // Parse tag name
+    while (i < body.length() && body[i] != '>' && !isspace(body[i])) {
+        tag_name += tolower(body[i]);
+        i++; 
+    }
+    
+    // Skip whitespace
+    while (i < body.length() && isspace(body[i])) {
+        i++;
+    }
+    
+    // Parse attributes
+    while (i < body.length() && body[i] != '>') {
+        while (i < body.length() && isspace(body[i])) {
+            i++;
+        }
+        
+        if (i >= body.length() || body[i] == '>') break;
+        
+        string attr_name = "";
+        while (i < body.length() && body[i] != '=' && body[i] != '>' && !isspace(body[i])) {
+            attr_name += tolower(body[i]);
+            i++;
+        }
+        
+        while (i < body.length() && isspace(body[i])) {
+            i++;
+        }
+        
+        string attr_value = "";
+        if (i < body.length() && body[i] == '=') {
+            i++;
+            while (i < body.length() && isspace(body[i])) {
+                i++;
+            }
+            
+            if (i < body.length() && (body[i] == '"' || body[i] == '\'')) {
+                char quote = body[i];
+                i++;
+                
+                while (i < body.length() && body[i] != quote) {
+                    attr_value += body[i];
+                    i++;
+                }
+                
+                if (i < body.length()) i++;
+            } else {
+                while (i < body.length() && body[i] != '>' && !isspace(body[i])) {
+                    attr_value += body[i];
+                    i++;
+                }
+            }
+        } else {
+            attr_value = attr_name; // Boolean attribute
+        }
+        
+        if (!attr_name.empty()) {
+            attributes[attr_name] = decode_html_entities(attr_value);
+        }
+    }
+    
+    return make_tuple(tag_name, attributes, is_closing);
+}
+
+// HTML Parser that builds a tree
+class HTMLParser {
+private:
+    string html;
+    size_t pos;
+    stack<ElementPtr> element_stack;
+
+    void skip_whitespace() {
+        while (pos < html.length() && isspace(html[pos])) {
+            pos++;
+        }
+    }
+
+    string parse_text() {
+        string text;
+        while (pos < html.length() && html[pos] != '<') {
+            text += html[pos];
+            pos++;
+        }
+        return text;
+    }
+
+    string parse_tag_content() {
+        string content;
+        pos++; // Skip '<'
+        
+        while (pos < html.length() && html[pos] != '>') {
+            content += html[pos];
+            pos++;
+        }
+        
+        if (pos < html.length()) {
+            pos++; // Skip '>'
+        }
+        
+        return content;
+    }
+
+    void remove_comments() {
+        string result;
+        for (size_t i = 0; i < html.length(); i++) {
+            if (i + 3 < html.length() && html.substr(i, 4) == "<!--") {
+                while (i < html.length() && !(i + 2 < html.length() && html.substr(i, 3) == "-->")) {
+                    i++;
+                }
+                i += 2; // Skip "-->"
+            } else {
+                result += html[i];
+            }
+        }
+        html = result;
+    }
+
+public:
+    HTMLParser(const string& html_content) : html(html_content), pos(0) {
+        remove_comments();
+    }
+
+    NodePtr parse() {
+        // Create implicit html root if not present
+        ElementPtr root = make_shared<Element>("html");
+        element_stack.push(root);
+
+        while (pos < html.length()) {
+            skip_whitespace();
+            
+            if (pos >= html.length()) break;
+
+            if (html[pos] == '<') {
+                string tag_content = parse_tag_content();
+                
+                if (tag_content.empty()) continue;
+                
+                // Skip DOCTYPE and other declarations
+                if (tag_content.find("!DOCTYPE") != string::npos || 
+                    tag_content.find("!--") != string::npos) {
+                    continue;
+                }
+
+                auto [tag_name, attributes, is_closing] = parse_tag(tag_content);
+                
+                if (tag_name.empty()) continue;
+
+                // Skip certain tags
+                if (find(tags_to_skip.begin(), tags_to_skip.end(), tag_name) != tags_to_skip.end()) {
+                    if (!is_closing) {
+                        // Skip until closing tag
+                        string closing_tag = "</" + tag_name;
+                        size_t end_pos = html.find(closing_tag, pos);
+                        if (end_pos != string::npos) {
+                            pos = end_pos + closing_tag.length() + 1;
+                        }
+                    }
+                    continue;
+                }
+
+                if (is_closing) {
+                    // Handle closing tag
+                    if (!element_stack.empty() && element_stack.top()->get_tag() == tag_name) {
+                        element_stack.pop();
+                    }
+                } else {
+                    // Handle opening tag
+                    ElementPtr element = make_shared<Element>(tag_name, attributes);
+                    
+                    if (!element_stack.empty()) {
+                        element_stack.top()->add_child(element);
+                    }
+                    
+                    // If not self-closing, push to stack
+                    if (!element->is_self_closing()) {
+                        element_stack.push(element);
+                    }
+                }
+            } else {
+                // Parse text content
+                string text_content = parse_text();
+                if (!trim(text_content).empty()) {
+                    TextPtr text_node = make_shared<Text>(text_content);
+                    if (!element_stack.empty()) {
+                        element_stack.top()->add_child(text_node);
+                    }
+                }
+            }
+        }
+
+        return root;
+    }
+};
+
+// Layout Box structure (from the tutorial)
+struct LayoutBox {
+    // Content dimensions
+    float x, y, width, height;
+    
+    // Padding
+    float padding_top, padding_right, padding_bottom, padding_left;
+    
+    // Border
+    float border_top, border_right, border_bottom, border_left;
+    
+    // Margin  
+    float margin_top, margin_right, margin_bottom, margin_left;
+    
+    // Associated node
+    NodePtr node;
+    
+    // Children boxes
+    vector<shared_ptr<LayoutBox>> children;
+    
+    LayoutBox(NodePtr n) : node(n), x(0), y(0), width(0), height(0),
+        padding_top(0), padding_right(0), padding_bottom(0), padding_left(0),
+        border_top(0), border_right(0), border_bottom(0), border_left(0),
+        margin_top(0), margin_right(0), margin_bottom(0), margin_left(0) {}
+    
+    // Calculate total width including padding, border, margin
+    float total_width() const {
+        return margin_left + border_left + padding_left + width + 
+               padding_right + border_right + margin_right;
+    }
+    
+    float total_height() const {
+        return margin_top + border_top + padding_top + height + 
+               padding_bottom + border_bottom + margin_bottom;
+    }
+    
+    // Content area coordinates
+    float content_x() const { return x + margin_left + border_left + padding_left; }
+    float content_y() const { return y + margin_top + border_top + padding_top; }
+};
+
+using LayoutBoxPtr = shared_ptr<LayoutBox>;
+
+// Rendering structures
+struct RenderedTextSegment {
+    string text;
+    float x, y;
+    float scale;
+    glm::vec3 color;
+    string font_type;
+    float weight;
+};
+
+// Layout Engine with tree-based approach
+class Layout {
+private:
+    Shader& s;
+    float start_x, start_y;
+    map<string, string> font_types;
+    float base_font_size;
+    float glyph_px;
+    
+    NodePtr document_tree;
+    LayoutBoxPtr layout_tree;
+    vector<RenderedTextSegment> display_list;
+
+public:
+    Layout(Shader& shader, float start_x, float start_y, map<string, string> types)
+        : s(shader), start_x(start_x), start_y(start_y), 
+          font_types(types), base_font_size(12.0f), glyph_px(48.0f) {}
+
+    void lex(const string& html_content) {
+        HTMLParser parser(html_content);
+        document_tree = parser.parse();
+        
+        // Debug: print the tree
+        cout << "=== Parsed HTML Tree ===" << endl;
+        if (document_tree) {
+            document_tree->print();
+        }
+        cout << "======================" << endl;
+    }
+
+    bool are_tokens_empty() const {
+        return !document_tree || document_tree->children.empty();
+    }
+
+    void set_cursor_y(float new_y) {
+        start_y = new_y;
+    }
+
+    // Create layout tree from document tree
+    LayoutBoxPtr create_layout_tree(NodePtr node, float container_width) {
+        LayoutBoxPtr box = make_shared<LayoutBox>(node);
+        
+        if (node->is_element()) {
+            ElementPtr element = static_pointer_cast<Element>(node);
+            
+            // Set default styles based on tag
+            string tag = element->get_tag();
+            
+            if (element->is_block_element()) {
+                box->width = container_width;
+                
+                // Default margins for headings and paragraphs
+                if (tag == "h1") {
+                    box->margin_top = 20;
+                    box->margin_bottom = 20;
+                } else if (tag == "h2") {
+                    box->margin_top = 16;
+                    box->margin_bottom = 16;
+                } else if (tag == "p") {
+                    box->margin_top = 12;
+                    box->margin_bottom = 12;
+                }
+            }
+            
+            // Apply CSS styles
+            const auto& styles = element->get_computed_style();
+            for (const auto& [property, value] : styles) {
+                if (property == "width" && value.ends_with("px")) {
+                    box->width = stof(value.substr(0, value.length()-2));
+                } else if (property == "height" && value.ends_with("px")) {
+                    box->height = stof(value.substr(0, value.length()-2));
+                } else if (property == "margin" && value.ends_with("px")) {
+                    float margin = stof(value.substr(0, value.length()-2));
+                    box->margin_top = box->margin_right = box->margin_bottom = box->margin_left = margin;
+                } else if (property == "padding" && value.ends_with("px")) {
+                    float padding = stof(value.substr(0, value.length()-2));
+                    box->padding_top = box->padding_right = box->padding_bottom = box->padding_left = padding;
+                }
+            }
+        }
+        
+        // Create child boxes
+        for (NodePtr child : node->children) {
+            LayoutBoxPtr child_box = create_layout_tree(child, box->width);
+            box->children.push_back(child_box);
+        }
+        
+        return box;
+    }
+
+    // Layout positioning
+    void layout_box(LayoutBoxPtr box, float container_x, float container_y) {
+        box->x = container_x;
+        box->y = container_y;
+        
+        float current_y = box->content_y();
+        
+        for (LayoutBoxPtr child : box->children) {
+            if (child->node->is_element()) {
+                ElementPtr element = static_pointer_cast<Element>(child->node);
+                if (element->is_block_element()) {
+                    layout_box(child, box->content_x(), current_y);
+                    current_y -= child->total_height();
+                } else {
+                    // Inline elements - simplified positioning
+                    layout_box(child, box->content_x(), current_y);
+                }
+            } else {
+                // Text node
+                layout_box(child, box->content_x(), current_y);
+                current_y -= 20;
+            }
+        }
+        
+        // Set box height based on children
+        if (!box->children.empty()) {
+            float content_height = current_y - box->content_y();
+            box->height = max(box->height, content_height);
+        }
+    }
+
+    // Generate display list
+    void paint_box(LayoutBoxPtr box, float screen_width, float screen_height, float dpi_scale) {
+        if (!box->node->is_element()) {
+            // Text node - render text
+            string text = box->node->get_text();
+            if (!trim(text).empty()) {
+                float scale = (base_font_size * dpi_scale) / glyph_px;
+                scale = max(0.2f, min(0.8f, scale));
+                
+                RenderedTextSegment segment = {
+                    text, box->content_x(), box->content_y(), scale,
+                    glm::vec3(0.0f, 0.0f, 0.0f), font_types["regular"], 400.0f
+                };
+                display_list.push_back(segment);
+            }
+        }
+        
+        // Paint children
+        for (LayoutBoxPtr child : box->children) {
+            paint_box(child, screen_width, screen_height, dpi_scale);
+        }
+    }
+
+    void render(float screen_width, float screen_height, float dpi_scale) {
+        if (!document_tree) return;
+        
+        display_list.clear();
+        
+        // Create layout tree
+        layout_tree = create_layout_tree(document_tree, screen_width - start_x * 2);
+        
+        // Position elements
+        layout_box(layout_tree, start_x, start_y);
+        
+        // Generate display list
+        paint_box(layout_tree, screen_width, screen_height, dpi_scale);
+        
+        // Render display list
+        for (const auto& segment : display_list) {
+            try {
+                set_active_font(segment.font_type);
+                if (is_variable_font(segment.font_type)) {
+                    set_font_weight(segment.font_type, segment.weight);
+                }
+                render_text(s, segment.text, segment.x, segment.y, segment.scale, 
+                           segment.color, screen_width, screen_height);
+            } catch (const exception& e) {
+                cerr << "Render error: " << e.what() << endl;
+            }
+        }
+    }
+};
+
+#endif

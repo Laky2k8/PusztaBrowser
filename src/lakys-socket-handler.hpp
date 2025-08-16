@@ -8,7 +8,7 @@
 #include <string>
 #include <iostream>
 #include <stdexcept>
-#include "StringSplitter.hpp"
+#include "lakys-string-helper.hpp"
 #include "PusztaParser.hpp"
 #include "socket/TcpSslClientSocket.hpp"
 #include "lakys-file-loader.hpp"
@@ -351,9 +351,12 @@ public:
                 }
 
                 // Check if the location is relative
-                if (location[0] != '/' && location.find("://") == std::string::npos) {
-                    // If it's relative, prepend the host
+                if (location[0] == '/') {
                     location = this->scheme + "://" + this->host + location;
+                } 
+                else if (location.find("://") == std::string::npos) {
+                    // If it doesn't contain a scheme, assume it's relative to the current host
+                    location = this->scheme + "://" + this->host + "/" + location;
                 }
 
                 std::cout << "Redirecting to: " << location << std::endl;

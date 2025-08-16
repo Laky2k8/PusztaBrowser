@@ -9,11 +9,14 @@
 #include <sstream>
 #include <algorithm>
 #include <cctype>
+#include <locale>
+
+using namespace std;
 
 class StringSplitter {
 public:
-    static std::vector<std::string> split(const std::string& str, const std::string& delimiter = "", int maxsplit = -1) {
-        std::vector<std::string> result;
+    static vector<string> split(const string& str, const string& delimiter = "", int maxsplit = -1) {
+        vector<string> result;
         
         if (str.empty()) {
             return result;
@@ -29,10 +32,10 @@ public:
     }
 
 private:
-    static std::vector<std::string> splitByWhitespace(const std::string& str, int maxsplit) {
-        std::vector<std::string> result;
-        std::stringstream ss(str);
-        std::string token;
+    static vector<string> splitByWhitespace(const string& str, int maxsplit) {
+        vector<string> result;
+        stringstream ss(str);
+        string token;
         int splits = 0;
         
         while (ss >> token && (maxsplit == -1 || splits < maxsplit)) {
@@ -42,8 +45,8 @@ private:
         
         // Handle remaining content when maxsplit is reached
         if (maxsplit != -1 && splits == maxsplit && ss >> token) {
-            std::string remainder = token;
-            std::string rest;
+            string remainder = token;
+            string rest;
             while (ss >> rest) {
                 remainder += " " + rest;
             }
@@ -53,13 +56,13 @@ private:
         return result;
     }
     
-    static std::vector<std::string> splitByDelimiter(const std::string& str, const std::string& delimiter, int maxsplit) {
-        std::vector<std::string> result;
-        std::string::size_type start = 0;
-        std::string::size_type end = 0;
+    static vector<string> splitByDelimiter(const string& str, const string& delimiter, int maxsplit) {
+        vector<string> result;
+        string::size_type start = 0;
+        string::size_type end = 0;
         int splits = 0;
         
-        while ((end = str.find(delimiter, start)) != std::string::npos && 
+        while ((end = str.find(delimiter, start)) != string::npos && 
                (maxsplit == -1 || splits < maxsplit)) {
             result.push_back(str.substr(start, end - start));
             start = end + delimiter.length();
@@ -74,12 +77,31 @@ private:
 };
 
 // Convenience function for easier usage
-std::vector<std::string> split(const std::string& str, const std::string& delimiter = "", int maxsplit = -1) {
+vector<string> split(const string& str, const string& delimiter = "", int maxsplit = -1) {
     return StringSplitter::split(str, delimiter, maxsplit);
 }
 
-bool contains(const std::string& haystack, const std::string& needle) {
-    return haystack.find(needle) != std::string::npos;
+bool contains(const string& haystack, const string& needle) {
+    return haystack.find(needle) != string::npos;
+}
+
+string to_lowercase(string in)
+{
+    locale loc;
+    string lowercase = "";
+    for(auto letter : in)
+    {
+        if(isalpha(letter, loc))
+        {
+            lowercase += tolower(letter, loc);
+        }
+        else
+        {
+            lowercase += letter;
+        }
+    }
+
+    return lowercase;
 }
 
 #endif

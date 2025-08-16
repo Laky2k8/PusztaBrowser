@@ -242,7 +242,7 @@ bool set_font_variation(const std::string& font_name, const VariationSettings& s
     bool success = apply_variation_settings(font_info);
     
     if (success) {
-        // Auto-load characters for the new variation with size 48 (your default)
+        // Auto-load characters for the new variation with size 48 
         ensure_characters_for_variation(font_info, 48);
     }
     
@@ -257,7 +257,7 @@ bool set_font_weight(const std::string& font_name, float weight) {
     bool success = apply_variation_settings(font_it->second);
     
     if (success) {
-        // Auto-load characters for the new variation with size 48 (your default)
+        // Auto-load characters for the new variation with size 48 
         ensure_characters_for_variation(font_it->second, 48);
     }
     
@@ -272,7 +272,7 @@ bool set_font_width(const std::string& font_name, float width) {
     bool success = apply_variation_settings(font_it->second);
     
     if (success) {
-        // Auto-load characters for the new variation with size 48 (your default)
+        // Auto-load characters for the new variation with size 48 
         ensure_characters_for_variation(font_it->second, 48);
     }
     
@@ -415,7 +415,7 @@ void load_characters(const std::string& font_name, int glyph_size) {
     
     for (wchar_t c = 0x0; c <= 0x024F; ++c) {
         if (FT_Load_Char(face, c, FT_LOAD_RENDER)) {
-            std::cerr << "LFH ERROR::FREETYPE: Failed to load glyph " << c << std::endl;
+            std::cerr << "LFH ERROR::FREETYPE: Failed to load glyph " << static_cast<int>(c) << std::endl;
             continue;
         }
         

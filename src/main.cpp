@@ -9,21 +9,25 @@
 #include <map>
 #include <memory>
 
-#include "StringSplitter.hpp"
+#include "lakys-string-helper.hpp"
 
 // Imgui
 #include"imgui.h"
 #include"imgui_impl_glfw.h"
 #include"imgui_impl_opengl3.h"
+#include "IconsFontAwesome6.h"
+
+// STB_Image
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
 
 #include "PusztaParser.hpp"
-
 
 // SETTINGS
 unsigned int SCR_WIDTH = 1280;
 unsigned int SCR_HEIGHT = 720;
 const std::string TITLE = "Puszta Browser";
-const std::string VERSION = "0.4.3";
+const std::string VERSION = "0.5";
 std::string SSL_CERT_PATH = "assets/ca_cert.pem";
 
 #define FONT_PATH "assets/fonts/"
@@ -35,6 +39,10 @@ float cursor_y_default = percentage_from_top_to_y(SCR_HEIGHT, 0.2f);
 float cursor_y = cursor_y_default;
 float site_top = 0.0f; // Top of the site content
 float site_bottom = 1000.0f;
+bool show_settings = false; // Settings window visibility
+
+vector<string> history;
+int history_index = -1;
 
 float dpi_scale = 1.0f;
 const float BASE_DPI = 96.0f;
@@ -64,13 +72,15 @@ float currentFrame = 0.0f; // Time of current frame
 
 //void centered_text(Shader &s, const std::string &text, float y, float scale, glm::vec3 color);
 
-void SetupImGuiStyle();
+void DarkMode();
+void LightMode();
 
 HTTP web;
 std::unique_ptr<Layout> layout;
 void search(std::string url, char* url_input);
 Shader* text_shader = nullptr;
 std::string site_content = "";
+string site_title = "New Page";
 
 int main()
 {
@@ -101,13 +111,13 @@ int main()
 	glfwMakeContextCurrent(window);
 
 	// Load icon
-	/*GLFWimage icons[1];
+	GLFWimage icons[1];
 	int width, height, channels;
-	unsigned char* icon = stbi_load("1.png", &width, &height, &channels, 0);
+	unsigned char* icon = stbi_load("assets/images/icon.png", &width, &height, &channels, 0);
 	icons[0].width = width;
 	icons[0].height = height;
 	icons[0].pixels = icon;
-	glfwSetWindowIcon(window, 1, icons);*/
+	glfwSetWindowIcon(window, 1, icons);
 
 	// Set callbacks
 	glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
@@ -145,8 +155,14 @@ int main()
 	ImFont* defaultFont = io.Fonts->AddFontFromFileTTF(FONT_PATH "non_variable/Rubik-Regular.ttf",20.0f);
 	io.FontDefault = defaultFont;
 
+	static const ImWchar fa_ranges[] = { ICON_MIN_FA, ICON_MAX_FA, 0 };
+	ImFontConfig icons_config;
+	icons_config.MergeMode = true;
+	icons_config.PixelSnapH = true;
+	ImFont* fa_font = io.Fonts->AddFontFromFileTTF(FONT_PATH "fa-solid-900.ttf", 20.0f, &icons_config, fa_ranges);
+
 	ImGui::StyleColorsDark(); // Set dark mode
-	SetupImGuiStyle();
+	DarkMode();
     ImGui_ImplGlfw_InitForOpenGL(window, true); // Initialize imgui for our window
     ImGui_ImplOpenGL3_Init("#version 330"); // For OpenGL 3.3
 	bool show_demo_window = true;
@@ -190,7 +206,7 @@ int main()
 
 		// set title to FPS
 		char title[256];
-		sprintf(title, "%s v%s - FPS: %d", TITLE.c_str(), VERSION.c_str(), (int)round(1.0f / deltaTime));
+		sprintf(title, "%s v%s - %s (%.2f FPS)", TITLE.c_str(), VERSION.c_str(), site_title.c_str(), 1.0f / deltaTime);
 		glfwSetWindowTitle(window, title);
 
 		// input
@@ -201,6 +217,11 @@ int main()
 		// ------
 		glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
 		glClear(GL_COLOR_BUFFER_BIT);
+
+		// Start imgui frame
+        ImGui_ImplOpenGL3_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
 
 		/*// Size text according to the screen size
 		text_base_size = (TARGET_TEXT_SIZE * dpi_scale) / 48.0f;
@@ -258,31 +279,44 @@ int main()
 
 		// imgui time
 
-        // Start imgui frame
-        ImGui_ImplOpenGL3_NewFrame();
-        ImGui_ImplGlfw_NewFrame();
-        ImGui::NewFrame();
-
-
 		ImGuiViewport* viewport = ImGui::GetMainViewport();
 		ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x, viewport->Pos.y));
-		ImGui::SetNextWindowSize(ImVec2(viewport->Size.x, 100));
+		ImGui::SetNextWindowSize(ImVec2(viewport->Size.x, 60));
 		ImGui::SetNextWindowViewport(viewport->ID);
 
-		ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_MenuBar;
+		ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings;
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
 		if (ImGui::Begin("StatusBar", nullptr, window_flags)) {
-			if (ImGui::BeginMenuBar()) {
+			/*if (ImGui::BeginMenuBar()) {
 				ImGui::Text((TITLE + " v" + VERSION).c_str());
 				ImGui::EndMenuBar();
-			}
+			}*/
+
+			// empty space looks better
+			float cursor_y_default = ImGui::GetCursorPosY();
+			float cursor_y = cursor_y_default;
+			ImGui::SetCursorPosY(cursor_y + 5.0f); 
+
+			// Control buttons
+			bool back_pressed = ImGui::ArrowButton("##left", ImGuiDir_Left);
+			ImGui::SameLine();
+			bool forward_pressed = ImGui::ArrowButton("##right", ImGuiDir_Right);
+			ImGui::SameLine();
+
+			ImGui::PushFont(fa_font);
+			bool reload_pressed = ImGui::Button(ICON_FA_ARROW_ROTATE_RIGHT);
+			ImGui::PopFont();
+
+
+			ImGui::SameLine();
 
 			// URL input
 			static char url_input[256];
-			ImGui::InputText("URL", url_input, IM_ARRAYSIZE(url_input), ImGuiInputTextFlags_EnterReturnsTrue);
+			bool should_search = ImGui::InputTextWithHint("##URL", "URL", url_input, IM_ARRAYSIZE(url_input), ImGuiInputTextFlags_EnterReturnsTrue);
 			ImGui::SetItemDefaultFocus();
 			ImGui::SameLine();
-			if (ImGui::Button("Go") || (ImGui::IsItemActive() && ImGui::IsKeyPressed(ImGuiKey_Enter)))
+			//if (ImGui::Button("Go") || (ImGui::IsItemActive() && ImGui::IsKeyPressed(ImGuiKey_Enter)))
+			if(should_search)
 			{
 				// Check if the url_input is not empty
 				if (strlen(url_input) > 0) 
@@ -300,6 +334,111 @@ int main()
 					site_content = "Please enter a valid URL.";
 				}
 			}
+
+
+			if(back_pressed)
+			{
+				if(history_index > 0)
+				{
+					history_index--;
+					std::string url = history[history_index];
+					std::cout << "Searching: " << url << std::endl;
+					search(url, url_input); // Pass the URL to the search function
+
+					cursor_y = cursor_y_default;
+				}
+			}
+
+			if(forward_pressed)
+			{
+				if(history_index < history.size() - 1)
+				{
+					history_index++;
+					std::string url = history[history_index];
+					std::cout << "Searching: " << url << std::endl;
+					search(url, url_input); // Pass the URL to the search function
+
+					cursor_y = cursor_y_default;
+				}
+			}
+
+			if(reload_pressed)
+			{
+				if(history_index >= 0 && history_index < history.size())
+				{
+					std::string url = history[history_index];
+					std::cout << "Reloading: " << url << std::endl;
+					search(url, url_input); 
+
+					cursor_y = cursor_y_default;
+				}
+			}
+
+			ImGui::SameLine();
+
+
+			// Calculate available space and position at the right edge
+			float avail = ImGui::GetContentRegionAvail().x;
+			float button_width = ImGui::CalcTextSize(ICON_FA_GEAR).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+			ImGui::SameLine(ImGui::GetCursorPosX() + avail - button_width);
+
+			if (ImGui::Button(ICON_FA_GEAR))
+				show_settings = true;
+
+			if(show_settings)
+			{
+				// Get the main viewport and calculate the center from it
+				ImGuiViewport* main_viewport = ImGui::GetMainViewport(); 
+				ImVec2 viewport_center = ImVec2(
+					main_viewport->Pos.x + main_viewport->Size.x * 0.5f,
+					main_viewport->Pos.y + main_viewport->Size.y * 0.5f
+				);
+				
+				// Center the settings window
+				ImVec2 window_size = ImVec2(400, 300);
+				ImGui::SetNextWindowPos(ImVec2(
+					viewport_center.x - window_size.x * 0.5f,
+					viewport_center.y - window_size.y * 0.5f
+				), ImGuiCond_Always);
+				
+				ImGui::SetNextWindowSize(window_size, ImGuiCond_Always);
+				ImGui::SetNextWindowBgAlpha(0.95f);
+				ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 12.0f);
+				ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 8.0f);
+
+				ImGui::SetNextWindowFocus();
+
+				if (ImGui::Begin("Settings", &show_settings, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse))
+				{
+					ImGui::Text("Settings");
+					ImGui::Separator();
+					
+					ImGui::Text("Theme:");
+					ImGui::SameLine();
+					ImGui::SetNextItemWidth(150.0f);
+
+					// Dropdown, no theme selection yet just an empty list
+					static int selected_theme = 0;
+					const char* themes[] = { "Dark", "Light" };
+
+					// ImGui::ListBox
+					if(ImGui::ListBox("##theme", &selected_theme, themes, IM_ARRAYSIZE(themes), 2))
+					{
+						if(selected_theme == 0)
+						{
+							DarkMode();
+						}
+						else if(selected_theme == 1)
+						{
+							LightMode();
+						}
+					}
+	
+				}
+				ImGui::End();
+				ImGui::PopStyleVar(2);
+			}
+
 
 			ImGui::End();
 		}
@@ -339,6 +478,7 @@ void search(std::string url = "", char* url_input = nullptr)
 	{
 		if(!url.empty())
 		{
+			
 			web.set(url);
 			site_content = web.request();
 			if (site_content.empty()) 
@@ -354,7 +494,18 @@ void search(std::string url = "", char* url_input = nullptr)
 				url_input[255] = '\0'; // null termination
 			}
 
+			// Save to history
+			if (history_index < 0 || history_index >= history.size() || history[history_index] != current_url) {
+				/*if (history_index < history.size() - 1) {
+					history.erase(history.begin() + history_index + 1, history.end());
+				}*/
+				history.push_back(current_url);
+				history_index = history.size() - 1; // Set to the last index
+			}
+
 			layout->lex(site_content);
+
+			site_title = layout->get_title();
 
 
 		}
@@ -485,7 +636,7 @@ float y_to_percentage_from_top(float y, float screen_height)
     return 1.0f - (y / screen_height);
 }
 
-void SetupImGuiStyle()
+void DarkMode()
 {
 	// Fork of Windark style from ImThemes
 	ImGuiStyle& style = ImGui::GetStyle();
@@ -502,19 +653,19 @@ void SetupImGuiStyle()
 	style.ChildBorderSize = 1.0f;
 	style.PopupRounding = 3.0f;
 	style.PopupBorderSize = 1.0f;
-	style.FramePadding = ImVec2(4.0f, 3.0f);
-	style.FrameRounding = 3.0f;
+	style.FramePadding = ImVec2(12, 8);
+	style.FrameRounding = 12.0f;
 	style.FrameBorderSize = 1.0f;
-	style.ItemSpacing = ImVec2(8.0f, 4.0f);
+	style.ItemSpacing = ImVec2(8, 8);
 	style.ItemInnerSpacing = ImVec2(4.0f, 4.0f);
-	style.CellPadding = ImVec2(4.0f, 2.0f);
+	style.CellPadding = ImVec2(8, 6);
 	style.IndentSpacing = 21.0f;
 	style.ColumnsMinSpacing = 6.0f;
 	style.ScrollbarSize = 5.599999904632568f;
 	style.ScrollbarRounding = 18.0f;
 	style.GrabMinSize = 10.0f;
 	style.GrabRounding = 3.0f;
-	style.TabRounding = 3.0f;
+	style.TabRounding = 6.0f;
 	style.TabBorderSize = 0.0f;
 	style.ColorButtonPosition = ImGuiDir_Right;
 	style.ButtonTextAlign = ImVec2(0.5f, 0.5f);
@@ -573,4 +724,82 @@ void SetupImGuiStyle()
 	style.Colors[ImGuiCol_NavWindowingHighlight] = ImVec4(1.0f, 1.0f, 1.0f, 0.699999988079071f);
 	style.Colors[ImGuiCol_NavWindowingDimBg] = ImVec4(0.800000011920929f, 0.800000011920929f, 0.800000011920929f, 0.2000000029802322f);
 	style.Colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.800000011920929f, 0.800000011920929f, 0.800000011920929f, 0.3499999940395355f);
+}
+
+
+void LightMode()
+{
+    ImGuiStyle& style = ImGui::GetStyle();
+
+	style.Alpha = 0.95f;
+	style.DisabledAlpha = 0.6000000238418579f;
+	style.WindowPadding = ImVec2(8.0f, 8.0f);
+	style.WindowRounding = 8.399999618530273f;
+	style.WindowBorderSize = 1.0f;
+	style.WindowMinSize = ImVec2(32.0f, 32.0f);
+	style.WindowTitleAlign = ImVec2(0.0f, 0.5f);
+	style.WindowMenuButtonPosition = ImGuiDir_Right;
+	style.ChildRounding = 3.0f;
+	style.ChildBorderSize = 1.0f;
+	style.PopupRounding = 3.0f;
+	style.PopupBorderSize = 1.0f;
+	style.FramePadding = ImVec2(12, 8);
+	style.FrameRounding = 12.0f;
+	style.FrameBorderSize = 1.0f;
+	style.ItemSpacing = ImVec2(8, 8);
+	style.ItemInnerSpacing = ImVec2(4.0f, 4.0f);
+	style.CellPadding = ImVec2(8, 6);
+	style.IndentSpacing = 21.0f;
+	style.ColumnsMinSpacing = 6.0f;
+	style.ScrollbarSize = 5.599999904632568f;
+	style.ScrollbarRounding = 18.0f;
+	style.GrabMinSize = 10.0f;
+	style.GrabRounding = 3.0f;
+	style.TabRounding = 6.0f;
+	style.TabBorderSize = 0.0f;
+	style.ColorButtonPosition = ImGuiDir_Right;
+	style.ButtonTextAlign = ImVec2(0.5f, 0.5f);
+	style.SelectableTextAlign = ImVec2(0.0f, 0.0f);
+
+    style.Colors[ImGuiCol_WindowBg]      = ImVec4(0.95f, 0.95f, 0.95f, 1.00f);
+    style.Colors[ImGuiCol_ChildBg]       = ImVec4(0.90f, 0.90f, 0.90f, 1.00f);
+    style.Colors[ImGuiCol_PopupBg]       = ImVec4(0.95f, 0.95f, 0.95f, 1.00f);
+    style.Colors[ImGuiCol_Text]          = ImVec4(0.10f, 0.10f, 0.10f, 1.00f);
+    style.Colors[ImGuiCol_TextDisabled]  = ImVec4(0.40f, 0.40f, 0.40f, 1.00f);
+    style.Colors[ImGuiCol_Border]        = ImVec4(0.80f, 0.80f, 0.80f, 1.00f);
+    style.Colors[ImGuiCol_BorderShadow]  = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    style.Colors[ImGuiCol_FrameBg]       = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
+    style.Colors[ImGuiCol_FrameBgHovered] = ImVec4(0.95f, 0.95f, 0.95f, 1.00f);
+    style.Colors[ImGuiCol_FrameBgActive]  = ImVec4(0.90f, 0.90f, 0.90f, 1.00f);
+    style.Colors[ImGuiCol_TitleBg]        = ImVec4(0.90f, 0.90f, 0.90f, 1.00f);
+    style.Colors[ImGuiCol_TitleBgActive]  = ImVec4(0.85f, 0.85f, 0.85f, 1.00f);
+    style.Colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.95f, 0.95f, 0.95f, 1.00f);
+    style.Colors[ImGuiCol_Button]         = ImVec4(0.85f, 0.85f, 0.85f, 1.00f);
+    style.Colors[ImGuiCol_ButtonHovered]  = ImVec4(0.75f, 0.75f, 0.75f, 1.00f);
+    style.Colors[ImGuiCol_ButtonActive] = ImVec4(0.0f, 0.4705882370471954f, 0.843137264251709f, 1.0f);
+    style.Colors[ImGuiCol_Header]         = ImVec4(0.85f, 0.85f, 0.85f, 1.00f);
+    style.Colors[ImGuiCol_HeaderHovered]  = ImVec4(0.75f, 0.75f, 0.75f, 1.00f);
+    style.Colors[ImGuiCol_HeaderActive]   = ImVec4(0.65f, 0.65f, 0.65f, 1.00f);
+    style.Colors[ImGuiCol_Separator]        = ImVec4(0.80f, 0.80f, 0.80f, 1.00f);
+    style.Colors[ImGuiCol_SeparatorHovered] = ImVec4(0.70f, 0.70f, 0.70f, 1.00f);
+    style.Colors[ImGuiCol_ResizeGrip]       = ImVec4(0.80f, 0.80f, 0.80f, 1.00f);
+    style.Colors[ImGuiCol_ResizeGripHovered] = ImVec4(0.70f, 0.70f, 0.70f, 1.00f);
+    style.Colors[ImGuiCol_Tab]            = ImVec4(0.93f, 0.93f, 0.93f, 1.00f);
+    style.Colors[ImGuiCol_TabHovered]     = ImVec4(0.82f, 0.82f, 0.82f, 1.00f);
+    style.Colors[ImGuiCol_TabActive]      = ImVec4(0.75f, 0.75f, 0.75f, 1.00f);
+    style.Colors[ImGuiCol_TabUnfocused]   = ImVec4(0.93f, 0.93f, 0.93f, 1.00f);
+    style.Colors[ImGuiCol_TabUnfocusedActive] = ImVec4(0.85f, 0.85f, 0.85f, 1.00f);
+    style.Colors[ImGuiCol_ScrollbarBg]        = ImVec4(0.90f, 0.90f, 0.90f, 1.00f);
+    style.Colors[ImGuiCol_ScrollbarGrab]      = ImVec4(0.80f, 0.80f, 0.80f, 1.00f);
+    style.Colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.70f, 0.70f, 0.70f, 1.00f);
+    style.Colors[ImGuiCol_PlotLines]           = ImVec4(0.10f, 0.10f, 0.10f, 1.00f);
+    style.Colors[ImGuiCol_PlotLinesHovered]    = ImVec4(0.20f, 0.20f, 0.20f, 1.00f);
+    style.Colors[ImGuiCol_PlotHistogram]       = ImVec4(0.10f, 0.10f, 0.10f, 1.00f);
+    style.Colors[ImGuiCol_PlotHistogramHovered] = ImVec4(0.20f, 0.20f, 0.20f, 1.00f);
+    style.Colors[ImGuiCol_CheckMark]       = ImVec4(0.00f, 0.47f, 0.84f, 1.00f);
+    style.Colors[ImGuiCol_SliderGrab]      = ImVec4(0.00f, 0.47f, 0.84f, 1.00f);
+    style.Colors[ImGuiCol_SliderGrabActive]= ImVec4(0.00f, 0.33f, 0.60f, 1.00f);
+    style.Colors[ImGuiCol_Button]          = ImVec4(0.85f, 0.85f, 0.85f, 1.00f);
+    style.Colors[ImGuiCol_DragDropTarget]  = ImVec4(1.00f, 1.00f, 0.00f, 0.90f);
+    style.Colors[ImGuiCol_NavHighlight]    = ImVec4(0.26f, 0.59f, 0.98f, 1.00f);
 }
