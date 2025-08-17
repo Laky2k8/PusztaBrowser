@@ -1,0 +1,79 @@
+body {
+	margin: 16px;
+	font-family: "Rubik", sans-serif;
+	font-size: 16px;
+	font-weight: 400;
+	color: #000;
+	background-color: #fff;
+}
+
+h1 {
+	font-size: 2em;
+	margin-bottom: 0.5em;
+	font-weight: 600;
+}
+
+h2
+{
+	font-size: 1.75em;
+	margin-bottom: 0.5em;
+	font-weight: 600;
+}
+
+h3 
+{
+	font-size: 1.5em;
+	margin-bottom: 0.5em;
+	font-weight: 600;
+}
+
+h4 
+{
+	font-size: 1.25em;
+	margin-bottom: 0.5em;
+	font-weight: 600;
+}
+
+h5 
+{
+	font-size: 1.1em;
+	margin-bottom: 0.5em;
+	font-weight: 600;
+}
+
+h6 
+{
+	font-size: 1em;
+	margin-bottom: 0.5em;
+	font-weight: 600;
+}
+
+p {
+	margin-top: 1em;
+	line-height: 1.5;
+	font-weight: 400;
+}
+
+b
+{
+	font-weight: 600;
+}
+
+strong
+{
+	font-weight: 600;
+}
+
+em
+{
+	font-style: italic;
+}
+
+i 
+{
+	font-style: italic;
+}
+
+a {
+	color: #000fff;
+}
